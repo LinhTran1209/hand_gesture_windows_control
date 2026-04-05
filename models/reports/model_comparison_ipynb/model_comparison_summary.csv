@@ -1,0 +1,5 @@
+model,val_accuracy,test_accuracy
+svm_rbf,0.974699,0.972973
+logistic_regression,0.987952,0.968273
+random_forest,0.96506,0.967098
+knn,0.903614,0.931845

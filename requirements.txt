@@ -1,0 +1,17 @@
+opencv-python==4.7.0.72
+opencv-contrib-python==4.7.0.72
+mediapipe==0.10.21
+numpy==1.26.4
+
+pandas==2.2.2
+scikit-learn>=1.5.0
+
+torch>=2.2.0
+torchvision>=0.17.0
+
+PySide6>=6.8.0
+pyautogui>=0.9.54
+
+matplotlib>=3.9.0
+joblib>=1.4.0
+pytest>=8.0.0

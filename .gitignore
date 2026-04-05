@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.venv/
+venv/
+env/
+
+.ipynb_checkpoints/
+
+.vscode/
+.idea/
+
+.DS_Store
+Thumbs.db
+
+data/raw/
+data/interim/
+data/processed/
+
+# models/checkpoints/
+# models/*.joblib
+
+
+!models/hand_landmarker.task
+
+models/reports/*.csv
+models/reports/*.json
+
+*.log
+*.cache
+*.tmp
