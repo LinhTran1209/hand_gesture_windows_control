@@ -1,5 +1,5 @@
-model,val_accuracy,test_accuracy
-svm_rbf,0.974699,0.972973
-logistic_regression,0.987952,0.968273
-random_forest,0.96506,0.967098
-knn,0.903614,0.931845
+model,val_accuracy,test_accuracy,val_macro_f1,test_macro_f1,val_weighted_f1,test_weighted_f1
+svm_rbf,0.974699,0.972973,0.971953,0.948098,0.974714,0.971585
+random_forest,0.96506,0.967098,0.970941,0.936145,0.965083,0.965045
+logistic_regression,0.987952,0.968273,0.989955,0.93197,0.987944,0.965452
+knn,0.903614,0.931845,0.919694,0.887425,0.903309,0.927613

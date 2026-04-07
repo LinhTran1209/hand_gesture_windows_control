@@ -19,7 +19,9 @@ from src.perception.hand_tracker import HandTracker
 # =========================
 # CONFIG
 # =========================
-MANIFEST_PATH = PROJECT_ROOT / "data" / "raw" / "self_collected" / "metadata" / "manifest_v1.csv"
+MANIFEST_PATH = (
+    PROJECT_ROOT / "data" / "raw" / "self_collected" / "metadata" / "manifest_v1.csv"
+)
 OUTPUT_DIR = PROJECT_ROOT / "data" / "interim" / "landmarks"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -207,8 +209,13 @@ def main() -> None:
     manifest = pd.read_csv(MANIFEST_PATH)
 
     required_cols = {
-        "video_path", "subject_id", "session_id", "lighting_condition",
-        "label", "frame_count", "is_readable"
+        "video_path",
+        "subject_id",
+        "session_id",
+        "lighting_condition",
+        "label",
+        "frame_count",
+        "is_readable",
     }
     missing = required_cols - set(manifest.columns)
     if missing:
@@ -255,7 +262,14 @@ def main() -> None:
 
                 if not ok or frame is None:
                     all_rows.append(
-                        empty_row(video_path, subject_id, session_id, lighting_condition, label, frame_idx)
+                        empty_row(
+                            video_path,
+                            subject_id,
+                            session_id,
+                            lighting_condition,
+                            label,
+                            frame_idx,
+                        )
                     )
                     continue
 
@@ -264,15 +278,31 @@ def main() -> None:
                 try:
                     detections = run_tracker(tracker, frame, timestamp_ms)
                 except Exception as e:
-                    print(f"[WARN] {video_path.name} frame {frame_idx}: process lỗi: {e}")
+                    print(
+                        f"[WARN] {video_path.name} frame {frame_idx}: process lỗi: {e}"
+                    )
                     all_rows.append(
-                        empty_row(video_path, subject_id, session_id, lighting_condition, label, frame_idx)
+                        empty_row(
+                            video_path,
+                            subject_id,
+                            session_id,
+                            lighting_condition,
+                            label,
+                            frame_idx,
+                        )
                     )
                     continue
 
                 if not detections:
                     all_rows.append(
-                        empty_row(video_path, subject_id, session_id, lighting_condition, label, frame_idx)
+                        empty_row(
+                            video_path,
+                            subject_id,
+                            session_id,
+                            lighting_condition,
+                            label,
+                            frame_idx,
+                        )
                     )
                     continue
 
@@ -281,7 +311,14 @@ def main() -> None:
 
                 if landmarks is None or len(landmarks) != 21:
                     all_rows.append(
-                        empty_row(video_path, subject_id, session_id, lighting_condition, label, frame_idx)
+                        empty_row(
+                            video_path,
+                            subject_id,
+                            session_id,
+                            lighting_condition,
+                            label,
+                            frame_idx,
+                        )
                     )
                     continue
 
@@ -325,7 +362,9 @@ def main() -> None:
                 "label": label,
                 "selected_frames": len(selected_indices),
                 "detected_frames": detected_count,
-                "detection_rate": round(detected_count / max(len(selected_indices), 1), 4),
+                "detection_rate": round(
+                    detected_count / max(len(selected_indices), 1), 4
+                ),
             }
         )
 

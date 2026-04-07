@@ -10,28 +10,28 @@ if str(PROJECT_ROOT) not in sys.path:
 print(f"[INFO] PROJECT_ROOT set to: {PROJECT_ROOT}")
 
 import inspect
+import json
 import time
 from collections import Counter, deque
 from typing import Any
 
 import cv2 as cv
 import joblib
-import numpy as np
 import pyautogui
 
 from src.capture.webcam import WebcamCapture, WebcamConfig
 from src.perception.hand_tracker import HandTracker
+from src.features.hand_landmark_features import landmarks_to_feature_vector
 
 
-# =========================
 # PATHS
-# =========================
-MODEL_PATH = PROJECT_ROOT / "models" / "checkpoints" / "static_svm_rbf.joblib"
+MODEL_PATH = PROJECT_ROOT / "models" / "checkpoints" / "static_best_model.joblib"
+MODEL_META_PATH = (
+    PROJECT_ROOT / "models" / "checkpoints" / "static_best_model_meta.json"
+)
 HAND_MODEL_PATH = PROJECT_ROOT / "models" / "hand_landmarker.task"
 
-# =========================
 # CONFIG
-# =========================
 SMOOTHING_WINDOW = 7
 SMOOTHING_MIN_VOTES = 5
 NO_HAND_RESET_FRAMES = 8
@@ -53,37 +53,32 @@ POINTER_MARGIN_Y = 0.22
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.0
 
+# Constant mappings label
+ACTIVE_LABEL = "open_palm"
+LOCK_LABEL = "fist"
+MOVE_LABEL = "point"
+CLICK_LABEL = "pinch"
+IDLE_LABEL = "no_gesture"
 
-# =========================
-# STATE
-# =========================
+
+# state của control,
+# lưu trữ thông tin về active/inactive, thời điểm click/swipe/mode switch cuối cùng để cooldown,
+# vị trí chuột hiện tại đã được làm mượt, hành động cuối cùng để hiển thị trên panel, và stable prediction trước đó để so sánh khi cần thiết
 @dataclass
 class ControlState:
-    active: bool = False  # open_palm -> active, fist -> lock
+    active: bool = False
     last_click_ts: float = 0.0
     last_swipe_ts: float = 0.0
     last_mode_ts: float = 0.0
     last_action: str = "None"
     mouse_x: float | None = None
     mouse_y: float | None = None
+    prev_stable_pred: str = "None"
 
 
-# =========================
-# UTILS
-# =========================
-def normalize_landmarks(landmarks_xyz: np.ndarray) -> np.ndarray:
-    wrist = landmarks_xyz[0].copy()
-    centered = landmarks_xyz - wrist
-
-    distances = np.linalg.norm(centered, axis=1)
-    scale = float(np.max(distances))
-    if scale < EPS:
-        scale = 1.0
-
-    normalized = centered / scale
-    return normalized
-
-
+# ============================================ Utils ============================================
+# Các utils để trích xuất thông tin từ detection, xử lý lịch sử prediction,
+# vẽ landmarks, tạo tracker, chạy tracker với API linh hoạt, chuyển đổi tọa độ, phát hiện swipe, và vẽ panel thông tin trên frame.
 def get_landmarks(det: Any):
     if det is None:
         return None
@@ -131,21 +126,6 @@ def get_score(det: Any) -> float:
         return 0.0
 
 
-def detection_to_feature_vector(det: Any) -> np.ndarray:
-    landmarks = get_landmarks(det)
-    if landmarks is None or len(landmarks) != 21:
-        raise ValueError("Detection không hợp lệ hoặc không đủ 21 landmarks.")
-
-    coords = np.array([[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float32)
-    normalized = normalize_landmarks(coords)
-    feature = normalized.reshape(-1)
-
-    if feature.shape[0] != 63:
-        raise ValueError(f"Feature dimension sai: {feature.shape[0]}")
-
-    return feature
-
-
 def majority_vote(history: deque[str]) -> tuple[str | None, int]:
     if not history:
         return None, 0
@@ -157,6 +137,16 @@ def majority_vote(history: deque[str]) -> tuple[str | None, int]:
         return label, count
 
     return None, count
+
+
+def safe_pyautogui(action_name: str, fn) -> tuple[bool, str]:
+    try:
+        fn()
+        return True, action_name
+    except pyautogui.FailSafeException:
+        return False, f"{action_name} blocked by FAILSAFE"
+    except Exception as exc:
+        return False, f"{action_name} error: {type(exc).__name__}"
 
 
 def draw_landmarks(frame: np.ndarray, landmarks: Any) -> np.ndarray:
@@ -326,7 +316,8 @@ def smooth_mouse_target(state: ControlState, tx: int, ty: int) -> tuple[int, int
 def maybe_move_mouse(state: ControlState, stable_pred: str, landmarks: Any) -> None:
     if MOVE_ONLY_WHEN_ACTIVE and not state.active:
         return
-    if stable_pred != "point":
+
+    if stable_pred != MOVE_LABEL:
         return
 
     pt = landmark_xy(landmarks, 8)  # index fingertip
@@ -343,23 +334,32 @@ def maybe_move_mouse(state: ControlState, stable_pred: str, landmarks: Any) -> N
     if dx < MOVE_DEADZONE and dy < MOVE_DEADZONE:
         return
 
-    pyautogui.moveTo(mx, my)
-    state.last_action = f"Move mouse -> ({mx}, {my})"
+    ok, msg = safe_pyautogui(
+        f"Move mouse -> ({mx}, {my})", lambda: pyautogui.moveTo(mx, my)
+    )
+    state.last_action = msg
 
 
 def maybe_left_click(state: ControlState, stable_pred: str) -> None:
     if not state.active:
         return
-    if stable_pred != "pinch":
+
+    if stable_pred != CLICK_LABEL:
+        return
+
+    # Chỉ click khi vừa chuyển sang pinch
+    if state.prev_stable_pred == CLICK_LABEL:
         return
 
     now = time.perf_counter()
     if now - state.last_click_ts < CLICK_COOLDOWN_SEC:
         return
 
-    pyautogui.click(button="left")
-    state.last_click_ts = now
-    state.last_action = "Left click"
+    ok, msg = safe_pyautogui("Left click", lambda: pyautogui.click(button="left"))
+    state.last_action = msg
+
+    if ok:
+        state.last_click_ts = now
 
 
 def maybe_toggle_active(state: ControlState, stable_pred: str) -> None:
@@ -367,11 +367,12 @@ def maybe_toggle_active(state: ControlState, stable_pred: str) -> None:
     if now - state.last_mode_ts < MODE_SWITCH_COOLDOWN_SEC:
         return
 
-    if stable_pred == "open_palm" and not state.active:
+    if stable_pred == ACTIVE_LABEL and not state.active:
         state.active = True
         state.last_mode_ts = now
         state.last_action = "ACTIVE"
-    elif stable_pred == "fist" and state.active:
+
+    elif stable_pred == LOCK_LABEL and state.active:
         state.active = False
         state.last_mode_ts = now
         state.last_action = "LOCK"
@@ -404,12 +405,12 @@ def maybe_handle_swipe(
 ) -> None:
     if not state.active:
         return
-    if stable_pred not in {"no_gesture", "point", "open_palm"}:
-        # vẫn cho phép tích lũy trajectory khi tay ở trạng thái không quá co cụm
+
+    if stable_pred not in {IDLE_LABEL, MOVE_LABEL, ACTIVE_LABEL}:
         trajectory.clear()
         return
 
-    pt = landmark_xy(landmarks, 0)  # wrist cho ổn định hơn fingertip
+    pt = landmark_xy(landmarks, 0)  # wrist
     if pt is None:
         trajectory.clear()
         return
@@ -424,14 +425,22 @@ def maybe_handle_swipe(
         return
 
     if swipe == "swipe_left":
-        pyautogui.hotkey("alt", "left")
-        state.last_action = "Swipe left -> Back"
-    elif swipe == "swipe_right":
-        pyautogui.hotkey("alt", "right")
-        state.last_action = "Swipe right -> Next"
+        ok, msg = safe_pyautogui(
+            "Swipe left -> Back", lambda: pyautogui.hotkey("alt", "left")
+        )
+        state.last_action = msg
+        if ok:
+            state.last_swipe_ts = now
+            trajectory.clear()
 
-    state.last_swipe_ts = now
-    trajectory.clear()
+    elif swipe == "swipe_right":
+        ok, msg = safe_pyautogui(
+            "Swipe right -> Next", lambda: pyautogui.hotkey("alt", "right")
+        )
+        state.last_action = msg
+        if ok:
+            state.last_swipe_ts = now
+            trajectory.clear()
 
 
 def draw_mouse_preview(frame: np.ndarray, state: ControlState, landmarks: Any) -> None:
@@ -513,7 +522,19 @@ def main() -> None:
         )
 
     model = joblib.load(MODEL_PATH)
-    print(f"[INFO] Loaded SVM model: {MODEL_PATH}")
+    print(f"[INFO] Loaded model: {MODEL_PATH}")
+
+    if hasattr(model, "classes_"):
+        print(f"[INFO] Model classes: {list(model.classes_)}")
+
+    if MODEL_META_PATH.exists():
+        try:
+            meta = json.loads(MODEL_META_PATH.read_text(encoding="utf-8"))
+            print(f"[INFO] Model meta loaded: {MODEL_META_PATH}")
+            print(f"[INFO] Best model name: {meta.get('best_model')}")
+            print(f"[INFO] Labels: {meta.get('labels')}")
+        except Exception as exc:
+            print(f"[WARN] Không đọc được metadata: {type(exc).__name__}")
 
     webcam = WebcamCapture(
         WebcamConfig(
@@ -584,7 +605,7 @@ def main() -> None:
                 score_text = f"{get_score(det):.2f}"
 
                 try:
-                    feature = detection_to_feature_vector(det).reshape(1, -1)
+                    feature = landmarks_to_feature_vector(landmarks).reshape(1, -1)
                     pred = model.predict(feature)[0]
                     raw_pred = str(pred)
 
@@ -616,6 +637,10 @@ def main() -> None:
                     stable_pred = "None"
                     stable_votes = 0
 
+                    if state.active:
+                        state.active = False
+                        state.last_action = "Auto LOCK (no hand)"
+
             current_time = time.perf_counter()
             fps = 1.0 / max(current_time - prev_time, 1e-6)
             prev_time = current_time
@@ -632,6 +657,7 @@ def main() -> None:
                 state=state,
             )
 
+            state.prev_stable_pred = stable_pred
             cv.imshow("Live Mouse Control Demo", annotated_frame)
 
             key = cv.waitKey(1) & 0xFF
