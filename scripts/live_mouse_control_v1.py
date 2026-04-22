@@ -16,6 +16,7 @@ from collections import Counter, deque
 from typing import Any
 
 import cv2 as cv
+import numpy as np
 import joblib
 import pyautogui
 
@@ -32,28 +33,33 @@ MODEL_META_PATH = (
 HAND_MODEL_PATH = PROJECT_ROOT / "models" / "hand_landmarker.task"
 
 # CONFIG
-SMOOTHING_WINDOW = 7
-SMOOTHING_MIN_VOTES = 5
-NO_HAND_RESET_FRAMES = 8
+SMOOTHING_WINDOW = 7  # số lượng frame gần để bỏ phiếu dự đoán, trafeoff giữa độ trễ phản hồi và ổn định
+SMOOTHING_MIN_VOTES = 5  # Số frame coi là là ổn định
+NO_HAND_RESET_FRAMES = 8  # số frame để coi là no_gesture
 EPS = 1e-6
 
-MOUSE_SMOOTHING = 0.25
-CLICK_COOLDOWN_SEC = 0.60
-MODE_SWITCH_COOLDOWN_SEC = 0.80
-SWIPE_COOLDOWN_SEC = 0.90
-SWIPE_WINDOW = 8
-SWIPE_MIN_DX = 0.18
-SWIPE_MAX_DY = 0.10
+MOUSE_SMOOTHING = 0.8  # độ mượt chuột 0-1
+CLICK_COOLDOWN_SEC = 0.60  # thời gian tối thiểu giữa 2 lần click
+MODE_SWITCH_COOLDOWN_SEC = 0.80  # thời gian tối thiểu giữa active và lock
+SWIPE_COOLDOWN_SEC = 0.90  # thời gian tối thiểu giữa 2 lần swipe
+# SWIPE_WINDOW = 8
+# SWIPE_MIN_DX = 0.18
+# SWIPE_MAX_DY = 0.10
+
+SWIPE_WINDOW = 6
+SWIPE_MIN_DX = 0.12
+SWIPE_MAX_DY = 0.14
+
 MOVE_ONLY_WHEN_ACTIVE = True
 DRAW_MOUSE_PREVIEW = True
 MOVE_DEADZONE = 0.01
 POINTER_MARGIN_X = 0.18
 POINTER_MARGIN_Y = 0.22
 
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.0
+pyautogui.FAILSAFE = True  # cờ tránh tường hợp chuột di vào góc màn hình
+pyautogui.PAUSE = 0.0  # không chèn thêm delay giữa các hành động pyautogui
 
-# Constant mappings label
+# Constant mappings label (các cử chỉ tĩnh được dùng để điều khiển)
 ACTIVE_LABEL = "open_palm"
 LOCK_LABEL = "fist"
 MOVE_LABEL = "point"
@@ -76,9 +82,12 @@ class ControlState:
     prev_stable_pred: str = "None"
 
 
-# ============================================ Utils ============================================
+# ============================================ Utils ==================================================================================
 # Các utils để trích xuất thông tin từ detection, xử lý lịch sử prediction,
 # vẽ landmarks, tạo tracker, chạy tracker với API linh hoạt, chuyển đổi tọa độ, phát hiện swipe, và vẽ panel thông tin trên frame.
+
+
+# get landmarks từ frame detection
 def get_landmarks(det: Any):
     if det is None:
         return None
@@ -89,7 +98,8 @@ def get_landmarks(det: Any):
     return None
 
 
-def get_handedness(det: Any) -> str:
+# get handedness từ frame detection
+def get_handedness(det: Any):
     if det is None:
         return "Unknown"
 
@@ -106,6 +116,7 @@ def get_handedness(det: Any) -> str:
     return str(value)
 
 
+# get score/confidence từ frame detection
 def get_score(det: Any) -> float:
     if det is None:
         return 0.0
@@ -126,6 +137,7 @@ def get_score(det: Any) -> float:
         return 0.0
 
 
+# get vote từ history prediction, 5/7
 def majority_vote(history: deque[str]) -> tuple[str | None, int]:
     if not history:
         return None, 0
@@ -139,6 +151,7 @@ def majority_vote(history: deque[str]) -> tuple[str | None, int]:
     return None, count
 
 
+# tránh lỗi pyautogui khi di chuyển chuột nhanh hoặc vào góc
 def safe_pyautogui(action_name: str, fn) -> tuple[bool, str]:
     try:
         fn()
@@ -149,6 +162,7 @@ def safe_pyautogui(action_name: str, fn) -> tuple[bool, str]:
         return False, f"{action_name} error: {type(exc).__name__}"
 
 
+# Vẽ landmarks lên frame
 def draw_landmarks(frame: np.ndarray, landmarks: Any) -> np.ndarray:
     canvas = frame.copy()
     if not landmarks:
@@ -201,6 +215,7 @@ def draw_landmarks(frame: np.ndarray, landmarks: Any) -> np.ndarray:
     return canvas
 
 
+# Tạo hand tracker
 def create_tracker() -> Any:
     init_sig = inspect.signature(HandTracker.__init__)
     supported = init_sig.parameters
@@ -208,9 +223,9 @@ def create_tracker() -> Any:
     candidate_kwargs = {
         "model_path": HAND_MODEL_PATH,
         "max_num_hands": 1,
-        "min_detection_confidence": 0.5,
-        "min_presence_confidence": 0.5,
-        "min_tracking_confidence": 0.5,
+        "min_detection_confidence": 0.7,
+        "min_presence_confidence": 0.7,
+        "min_tracking_confidence": 0.7,
     }
 
     kwargs = {k: v for k, v in candidate_kwargs.items() if k in supported}
@@ -221,6 +236,7 @@ def create_tracker() -> Any:
     return HandTracker(**kwargs)
 
 
+# chuẩn hóa output từ tracker.process thành (annotated_frame, [detections])
 def unpack_process_result(
     result: Any, original_frame: np.ndarray
 ) -> tuple[np.ndarray, list[Any]]:
@@ -251,6 +267,7 @@ def unpack_process_result(
     return original_frame.copy(), [result]
 
 
+# Chạy tracker
 def run_tracker(
     tracker: Any, frame: np.ndarray, timestamp_ms: int
 ) -> tuple[np.ndarray, list[Any]]:
@@ -277,10 +294,12 @@ def run_tracker(
     return unpack_process_result(result, frame)
 
 
+# giới hạn giá trị x,y về [0,1] để tránh lỗi khi mapping sang tọa độ màn
 def clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
+# hàm lấy tọa độ x,y của landmark tại index, trả về None nếu không có hoặc lỗi
 def landmark_xy(landmarks: Any, idx: int) -> tuple[float, float] | None:
     if landmarks is None or len(landmarks) <= idx:
         return None
@@ -292,6 +311,7 @@ def landmark_xy(landmarks: Any, idx: int) -> tuple[float, float] | None:
     return float(x), float(y)
 
 
+# hàm chuyển tọa độ normalized (0-1) của landmark sang tọa độ screen
 def normalized_point_to_screen(
     nx: float, ny: float, screen_w: int, screen_h: int
 ) -> tuple[int, int]:
@@ -303,6 +323,7 @@ def normalized_point_to_screen(
     return int(x * (screen_w - 1)), int(y * (screen_h - 1))
 
 
+# hàm smoth tọa độ chuột tránh nhảy nhanh khi di chuyển
 def smooth_mouse_target(state: ControlState, tx: int, ty: int) -> tuple[int, int]:
     if state.mouse_x is None or state.mouse_y is None:
         state.mouse_x = float(tx)
@@ -313,6 +334,7 @@ def smooth_mouse_target(state: ControlState, tx: int, ty: int) -> tuple[int, int
     return int(state.mouse_x), int(state.mouse_y)
 
 
+# hàm điều khiển di chuyển chuột nếu đang ở chế độ MOVE_LABEL (dẫ kích hoạt open palm) và cử chỉ ổn định
 def maybe_move_mouse(state: ControlState, stable_pred: str, landmarks: Any) -> None:
     if MOVE_ONLY_WHEN_ACTIVE and not state.active:
         return
@@ -340,6 +362,7 @@ def maybe_move_mouse(state: ControlState, stable_pred: str, landmarks: Any) -> N
     state.last_action = msg
 
 
+# hàm click chuột trái (pinch)
 def maybe_left_click(state: ControlState, stable_pred: str) -> None:
     if not state.active:
         return
@@ -362,6 +385,7 @@ def maybe_left_click(state: ControlState, stable_pred: str) -> None:
         state.last_click_ts = now
 
 
+# hàm chuyển đổi active và lock dựa trên open palm và fist
 def maybe_toggle_active(state: ControlState, stable_pred: str) -> None:
     now = time.perf_counter()
     if now - state.last_mode_ts < MODE_SWITCH_COOLDOWN_SEC:
@@ -378,6 +402,7 @@ def maybe_toggle_active(state: ControlState, stable_pred: str) -> None:
         state.last_action = "LOCK"
 
 
+# hàm swipe dựa trên trajectory của wrist trong một cửa sổ thời gian nhất định, phát hiện swipe trái/phải dựa trên dx/dy (chưa thực hiện )
 def detect_swipe(trajectory: deque[tuple[float, float]]) -> str | None:
     if len(trajectory) < SWIPE_WINDOW:
         return None
@@ -397,6 +422,7 @@ def detect_swipe(trajectory: deque[tuple[float, float]]) -> str | None:
     return None
 
 
+# hàm xử lý swipe nếu đang active dựa theo wist trajectory
 def maybe_handle_swipe(
     state: ControlState,
     stable_pred: str,
@@ -443,6 +469,7 @@ def maybe_handle_swipe(
             trajectory.clear()
 
 
+# hàm vẽ preview vị trí chuột dựa trên landmark fingertip nếu đang ở chế độ MOVE_LABEL
 def draw_mouse_preview(frame: np.ndarray, state: ControlState, landmarks: Any) -> None:
     if not DRAW_MOUSE_PREVIEW:
         return
@@ -469,6 +496,7 @@ def draw_mouse_preview(frame: np.ndarray, state: ControlState, landmarks: Any) -
     )
 
 
+# hàm vẽ panel thông tin về FPS, prediction, handedness, score, lịch sử prediction, số frame không có tay, và trạng thái control lên frame
 def draw_panel(
     frame: np.ndarray,
     fps: float,

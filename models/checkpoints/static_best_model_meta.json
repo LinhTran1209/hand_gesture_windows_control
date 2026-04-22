@@ -5,7 +5,8 @@
     "no_gesture",
     "open_palm",
     "pinch",
-    "point"
+    "point",
+    "two_fingers"
   ],
   "feature_columns": [
     "f0",
@@ -73,10 +74,10 @@
     "f62"
   ],
   "feature_dim": 63,
-  "val_accuracy": 0.9746987951807229,
-  "test_accuracy": 0.972972972972973,
-  "val_macro_f1": 0.9719526462559992,
-  "test_macro_f1": 0.9480979962099612,
+  "val_accuracy": 0.9825242718446602,
+  "test_accuracy": 0.978116079923882,
+  "val_macro_f1": 0.9791343542143965,
+  "test_macro_f1": 0.9567483301749676,
   "data_files": {
     "train_csv": "D:\\Study\\DATN\\hand_gesture_windows_control\\data\\processed\\static\\train_static_v1.csv",
     "val_csv": "D:\\Study\\DATN\\hand_gesture_windows_control\\data\\processed\\static\\val_static_v1.csv",

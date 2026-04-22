@@ -9,11 +9,21 @@ import cv2 as cv
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Record self-collected hand gesture dataset clips.")
-    parser.add_argument("--label", type=str, required=True, help="Gesture label, ví dụ: open_palm")
-    parser.add_argument("--subject", type=str, required=True, help="Subject ID, ví dụ: 01")
-    parser.add_argument("--session", type=str, required=True, help="Session ID, ví dụ: 01")
-    parser.add_argument("--duration", type=float, default=3.0, help="Thời lượng mỗi clip (giây)")
+    parser = argparse.ArgumentParser(
+        description="Record self-collected hand gesture dataset clips."
+    )
+    parser.add_argument(
+        "--label", type=str, required=True, help="Gesture label, ví dụ: open_palm"
+    )
+    parser.add_argument(
+        "--subject", type=str, required=True, help="Subject ID, ví dụ: 01"
+    )
+    parser.add_argument(
+        "--session", type=str, required=True, help="Session ID, ví dụ: 01"
+    )
+    parser.add_argument(
+        "--duration", type=float, default=3.0, help="Thời lượng mỗi clip (giây)"
+    )
     parser.add_argument("--camera", type=int, default=0, help="Camera index")
     parser.add_argument("--width", type=int, default=1280, help="Frame width")
     parser.add_argument("--height", type=int, default=720, help="Frame height")
@@ -22,13 +32,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def create_output_dir(project_root: Path, subject: str, session: str, label: str) -> Path:
+def create_output_dir(
+    project_root: Path, subject: str, session: str, label: str
+) -> Path:
     output_dir = (
         project_root
         / "data"
         / "raw"
         / "self_collected"
         / "videos"
+        / "dynamic"  # static or dynamic
         / f"subject_{subject}"
         / f"session_{session}"
         / label
@@ -140,7 +153,9 @@ def main() -> None:
                 break
 
             if key == ord("r") and not recording:
-                current_output_path = build_output_path(output_dir, args.label, args.subject, args.session)
+                current_output_path = build_output_path(
+                    output_dir, args.label, args.subject, args.session
+                )
                 fourcc = cv.VideoWriter_fourcc(*"mp4v")
                 writer = cv.VideoWriter(
                     str(current_output_path),

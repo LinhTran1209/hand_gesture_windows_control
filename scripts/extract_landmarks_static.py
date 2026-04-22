@@ -30,7 +30,7 @@ QUALITY_CSV = OUTPUT_DIR / "static_landmarks_quality_v1.csv"
 
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "hand_landmarker.task"
 
-STATIC_LABELS = {"open_palm", "point", "pinch", "fist", "no_gesture"}
+STATIC_LABELS = {"open_palm", "point", "pinch", "fist", "no_gesture", "two_fingers"}
 
 
 # =========================

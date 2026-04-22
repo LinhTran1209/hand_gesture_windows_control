@@ -1,15 +1,20 @@
 from __future__ import annotations
-
+    
 from pathlib import Path
 import cv2 as cv
 import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-VIDEOS_ROOT = PROJECT_ROOT / "data" / "raw" / "self_collected" / "videos"
+
+# dynamic hoặc static
+DATASET_TYPE = "dynamic"
+
+VIDEOS_ROOT = PROJECT_ROOT / "data" / "raw" / "self_collected" / "videos" / DATASET_TYPE
+print(f"[INFO] Dataset type: {VIDEOS_ROOT}")
 OUTPUT_DIR = PROJECT_ROOT / "data" / "raw" / "self_collected" / "metadata"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_CSV = OUTPUT_DIR / "manifest_v1.csv"
+OUTPUT_CSV = OUTPUT_DIR / f"manifest_{DATASET_TYPE}_v1.csv"
 
 
 SESSION_LIGHT_MAP = {
@@ -49,7 +54,9 @@ def main() -> None:
 
     video_files = sorted(VIDEOS_ROOT.rglob("*.mp4"))
     if not video_files:
-        raise RuntimeError("Không tìm thấy file .mp4 nào trong dataset.")
+        raise RuntimeError(
+            f"Không tìm thấy file .mp4 nào trong dataset {DATASET_TYPE}."
+        )
 
     for video_path in video_files:
         try:
@@ -61,8 +68,10 @@ def main() -> None:
             continue
 
         if not subject_id.startswith("subject_"):
+            print(f"[SKIP] Sai subject_id format: {video_path}")
             continue
         if not session_id.startswith("session_"):
+            print(f"[SKIP] Sai session_id format: {video_path}")
             continue
 
         light_condition = SESSION_LIGHT_MAP.get(session_id, "unknown")
@@ -70,6 +79,7 @@ def main() -> None:
 
         rows.append(
             {
+                "dataset_type": DATASET_TYPE,
                 "video_path": str(video_path.resolve()),
                 "video_name": video_path.name,
                 "subject_id": subject_id,
@@ -84,10 +94,14 @@ def main() -> None:
         )
 
     df = pd.DataFrame(rows)
-    df = df.sort_values(["subject_id", "session_id", "label", "video_name"]).reset_index(drop=True)
+    df = df.sort_values(
+        ["subject_id", "session_id", "label", "video_name"]
+    ).reset_index(drop=True)
+
     df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
 
     print(f"[DONE] Đã tạo manifest: {OUTPUT_CSV}")
+    print(f"[INFO] Dataset type: {DATASET_TYPE}")
     print(f"[INFO] Tổng số video: {len(df)}")
 
     print("\n[SỐ LƯỢNG THEO LABEL]")
