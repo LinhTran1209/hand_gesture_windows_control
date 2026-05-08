@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import inspect
 import sys
 from pathlib import Path
@@ -19,24 +20,107 @@ from src.perception.hand_tracker import HandTracker
 # =========================
 # CONFIG
 # =========================
-MANIFEST_PATH = (
-    PROJECT_ROOT / "data" / "raw" / "self_collected" / "metadata" / "manifest_v1.csv"
-)
+DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "hand_landmarker.task"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "interim" / "landmarks"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-OUTPUT_CSV = OUTPUT_DIR / "static_landmarks_v1.csv"
-QUALITY_CSV = OUTPUT_DIR / "static_landmarks_quality_v1.csv"
+STATIC_LABELS = {
+    "open_palm",
+    "point",
+    "pinch",
+    "fist",
+    "no_gesture",
+    "two_fingers",
+    # "thumbs_up",
+}
 
-DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "hand_landmarker.task"
+DYNAMIC_LABELS = {
+    "move_left",
+    "move_right",
+    "move_up",
+    "move_down",
+    "no_motion",
+}
 
-STATIC_LABELS = {"open_palm", "point", "pinch", "fist", "no_gesture", "two_fingers"}
+DATASET_CONFIG = {
+    "static": {
+        "manifest_path": PROJECT_ROOT
+        / "data"
+        / "raw"
+        / "self_collected"
+        / "metadata"
+        / "manifest_static_v1.csv",
+        "output_csv": OUTPUT_DIR / "static_landmarks_v1.csv",
+        "quality_csv": OUTPUT_DIR / "static_landmarks_quality_v1.csv",
+        "labels": STATIC_LABELS,
+        "sampling_mode": "sparse",
+        "frames_per_video": 10,
+    },
+    "dynamic": {
+        "manifest_path": PROJECT_ROOT
+        / "data"
+        / "raw"
+        / "self_collected"
+        / "metadata"
+        / "manifest_dynamic_v1.csv",
+        "output_csv": OUTPUT_DIR / "dynamic_landmarks_v1.csv",
+        "quality_csv": OUTPUT_DIR / "dynamic_landmarks_quality_v1.csv",
+        "labels": DYNAMIC_LABELS,
+        "sampling_mode": "sequence",
+        "frames_per_video": None,
+    },
+}
 
 
 # =========================
 # UTILS
 # =========================
-def choose_frame_indices(frame_count: int, frames_per_video: int = 10) -> list[int]:
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Extract hand landmarks for static or dynamic gesture dataset."
+    )
+    parser.add_argument(
+        "--dataset-type",
+        choices=["static", "dynamic"],
+        required=True,
+        help="Chọn loại dataset cần extract: static hoặc dynamic.",
+    )
+    parser.add_argument(
+        "--manifest-path",
+        type=Path,
+        default=None,
+        help="Override đường dẫn manifest nếu cần.",
+    )
+    parser.add_argument(
+        "--output-csv",
+        type=Path,
+        default=None,
+        help="Override đường dẫn file output landmarks.",
+    )
+    parser.add_argument(
+        "--quality-csv",
+        type=Path,
+        default=None,
+        help="Override đường dẫn file output quality.",
+    )
+    parser.add_argument(
+        "--frames-per-video",
+        type=int,
+        default=None,
+        help="Số frame sample cho static. Bỏ qua với dynamic.",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Giới hạn số frame tối đa mỗi video ở dynamic để debug nhanh.",
+    )
+    return parser.parse_args()
+
+
+def choose_frame_indices_static(
+    frame_count: int, frames_per_video: int = 10
+) -> list[int]:
     if frame_count <= 0:
         return []
 
@@ -58,6 +142,38 @@ def choose_frame_indices(frame_count: int, frames_per_video: int = 10) -> list[i
     return indices.tolist()
 
 
+def choose_frame_indices_dynamic(
+    frame_count: int,
+    max_frames: int | None = None,
+) -> list[int]:
+    if frame_count <= 0:
+        return []
+
+    indices = list(range(frame_count))
+    if max_frames is not None and max_frames > 0:
+        indices = indices[:max_frames]
+    return indices
+
+
+def build_frame_indices(
+    dataset_type: str,
+    frame_count: int,
+    frames_per_video: int | None = None,
+    max_frames: int | None = None,
+) -> list[int]:
+    if dataset_type == "static":
+        return choose_frame_indices_static(
+            frame_count=frame_count,
+            frames_per_video=frames_per_video or 10,
+        )
+    if dataset_type == "dynamic":
+        return choose_frame_indices_dynamic(
+            frame_count=frame_count,
+            max_frames=max_frames,
+        )
+    raise ValueError(f"dataset_type không hợp lệ: {dataset_type}")
+
+
 def empty_row(
     video_path: Path,
     subject_id: Any,
@@ -65,8 +181,10 @@ def empty_row(
     lighting_condition: Any,
     label: str,
     frame_idx: int,
+    dataset_type: str,
 ) -> dict[str, Any]:
     row = {
+        "dataset_type": dataset_type,
         "video_path": str(video_path),
         "video_name": video_path.name,
         "subject_id": subject_id,
@@ -194,19 +312,48 @@ def get_score(det: Any) -> float:
         return 0.0
 
 
+def resolve_runtime_config(args: argparse.Namespace) -> dict[str, Any]:
+    cfg = DATASET_CONFIG[args.dataset_type].copy()
+    if args.manifest_path is not None:
+        cfg["manifest_path"] = args.manifest_path
+    if args.output_csv is not None:
+        cfg["output_csv"] = args.output_csv
+    if args.quality_csv is not None:
+        cfg["quality_csv"] = args.quality_csv
+    if args.frames_per_video is not None:
+        cfg["frames_per_video"] = args.frames_per_video
+    cfg["max_frames"] = args.max_frames
+    return cfg
+
+
 # =========================
 # MAIN
 # =========================
 def main() -> None:
-    print("[INFO] PROJECT_ROOT :", PROJECT_ROOT)
-    print("[INFO] MANIFEST_PATH :", MANIFEST_PATH)
-    print("[INFO] OUTPUT_CSV    :", OUTPUT_CSV)
-    print("[INFO] QUALITY_CSV   :", QUALITY_CSV)
+    args = parse_args()
+    cfg = resolve_runtime_config(args)
 
-    if not MANIFEST_PATH.exists():
-        raise FileNotFoundError(f"Không tìm thấy manifest: {MANIFEST_PATH}")
+    dataset_type = args.dataset_type
+    manifest_path = Path(cfg["manifest_path"])
+    output_csv = Path(cfg["output_csv"])
+    quality_csv = Path(cfg["quality_csv"])
+    labels = set(cfg["labels"])
+    frames_per_video = cfg.get("frames_per_video")
+    max_frames = cfg.get("max_frames")
 
-    manifest = pd.read_csv(MANIFEST_PATH)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    quality_csv.parent.mkdir(parents=True, exist_ok=True)
+
+    print("[INFO] PROJECT_ROOT  :", PROJECT_ROOT)
+    print("[INFO] DATASET_TYPE  :", dataset_type)
+    print("[INFO] MANIFEST_PATH :", manifest_path)
+    print("[INFO] OUTPUT_CSV    :", output_csv)
+    print("[INFO] QUALITY_CSV   :", quality_csv)
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Không tìm thấy manifest: {manifest_path}")
+
+    manifest = pd.read_csv(manifest_path)
 
     required_cols = {
         "video_path",
@@ -221,11 +368,13 @@ def main() -> None:
     if missing:
         raise RuntimeError(f"Manifest thiếu cột: {sorted(missing)}")
 
-    manifest = manifest[manifest["label"].isin(STATIC_LABELS)].copy()
+    manifest = manifest[manifest["label"].isin(labels)].copy()
     manifest = manifest[manifest["is_readable"] == 1].reset_index(drop=True)
 
     if len(manifest) == 0:
-        raise RuntimeError("Không có video static hợp lệ trong manifest.")
+        raise RuntimeError(
+            f"Không có video {dataset_type} hợp lệ trong manifest sau khi filter labels."
+        )
 
     all_rows: list[dict[str, Any]] = []
     quality_rows: list[dict[str, Any]] = []
@@ -250,13 +399,18 @@ def main() -> None:
             continue
 
         fps = cap.get(cv.CAP_PROP_FPS) or 30.0
-        selected_indices = choose_frame_indices(frame_count, frames_per_video=10)
+        selected_indices = build_frame_indices(
+            dataset_type=dataset_type,
+            frame_count=frame_count,
+            frames_per_video=frames_per_video,
+            max_frames=max_frames,
+        )
         tracker = create_tracker()
 
         detected_count = 0
 
         try:
-            for local_idx, frame_idx in enumerate(selected_indices):
+            for frame_idx in selected_indices:
                 cap.set(cv.CAP_PROP_POS_FRAMES, frame_idx)
                 ok, frame = cap.read()
 
@@ -269,6 +423,7 @@ def main() -> None:
                             lighting_condition,
                             label,
                             frame_idx,
+                            dataset_type,
                         )
                     )
                     continue
@@ -289,6 +444,7 @@ def main() -> None:
                             lighting_condition,
                             label,
                             frame_idx,
+                            dataset_type,
                         )
                     )
                     continue
@@ -302,6 +458,7 @@ def main() -> None:
                             lighting_condition,
                             label,
                             frame_idx,
+                            dataset_type,
                         )
                     )
                     continue
@@ -318,6 +475,7 @@ def main() -> None:
                             lighting_condition,
                             label,
                             frame_idx,
+                            dataset_type,
                         )
                     )
                     continue
@@ -325,6 +483,7 @@ def main() -> None:
                 detected_count += 1
 
                 out_row = {
+                    "dataset_type": dataset_type,
                     "video_path": str(video_path),
                     "video_name": video_path.name,
                     "subject_id": subject_id,
@@ -354,6 +513,7 @@ def main() -> None:
 
         quality_rows.append(
             {
+                "dataset_type": dataset_type,
                 "video_path": str(video_path),
                 "video_name": video_path.name,
                 "subject_id": subject_id,
@@ -380,11 +540,11 @@ def main() -> None:
     df = pd.DataFrame(all_rows)
     q = pd.DataFrame(quality_rows)
 
-    df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
-    q.to_csv(QUALITY_CSV, index=False, encoding="utf-8-sig")
+    df.to_csv(output_csv, index=False, encoding="utf-8-sig")
+    q.to_csv(quality_csv, index=False, encoding="utf-8-sig")
 
-    print(f"\n[DONE] Saved: {OUTPUT_CSV}")
-    print(f"[DONE] Saved: {QUALITY_CSV}")
+    print(f"\n[DONE] Saved: {output_csv}")
+    print(f"[DONE] Saved: {quality_csv}")
     print(f"[INFO] Frame rows: {len(df)}")
 
     print("\n[COUNTS BY LABEL / DETECTED]")

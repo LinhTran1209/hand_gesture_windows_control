@@ -1,21 +1,15 @@
 from __future__ import annotations
-    
+
+import argparse
 from pathlib import Path
+
 import cv2 as cv
 import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-# dynamic hoặc static
-DATASET_TYPE = "dynamic"
-
-VIDEOS_ROOT = PROJECT_ROOT / "data" / "raw" / "self_collected" / "videos" / DATASET_TYPE
-print(f"[INFO] Dataset type: {VIDEOS_ROOT}")
-OUTPUT_DIR = PROJECT_ROOT / "data" / "raw" / "self_collected" / "metadata"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_CSV = OUTPUT_DIR / f"manifest_{DATASET_TYPE}_v1.csv"
-
+METADATA_DIR = PROJECT_ROOT / "data" / "raw" / "self_collected" / "metadata"
+METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
 SESSION_LIGHT_MAP = {
     "session_01": "normal_light",
@@ -23,15 +17,20 @@ SESSION_LIGHT_MAP = {
 }
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build manifest for static or dynamic self-collected videos."
+    )
+    parser.add_argument("--dataset-type", choices=["static", "dynamic"], required=True)
+    parser.add_argument("--videos-root", type=Path, default=None)
+    parser.add_argument("--output-csv", type=Path, default=None)
+    return parser.parse_args()
+
+
 def get_video_info(video_path: Path) -> dict:
     cap = cv.VideoCapture(str(video_path))
     if not cap.isOpened():
-        return {
-            "fps": 0.0,
-            "frame_count": 0,
-            "duration_sec": 0.0,
-            "is_readable": 0,
-        }
+        return {"fps": 0.0, "frame_count": 0, "duration_sec": 0.0, "is_readable": 0}
 
     fps = float(cap.get(cv.CAP_PROP_FPS) or 0.0)
     frame_count = int(cap.get(cv.CAP_PROP_FRAME_COUNT) or 0)
@@ -47,16 +46,25 @@ def get_video_info(video_path: Path) -> dict:
 
 
 def main() -> None:
-    if not VIDEOS_ROOT.exists():
-        raise FileNotFoundError(f"Không tìm thấy thư mục video: {VIDEOS_ROOT}")
+    args = parse_args()
+
+    dataset_type = args.dataset_type
+    videos_root = args.videos_root or (
+        PROJECT_ROOT / "data" / "raw" / "self_collected" / "videos" / dataset_type
+    )
+    output_csv = args.output_csv or METADATA_DIR / f"manifest_{dataset_type}_v1.csv"
+
+    print("[INFO] dataset_type:", dataset_type)
+    print("[INFO] videos_root :", videos_root)
+    print("[INFO] output_csv  :", output_csv)
+
+    if not videos_root.exists():
+        raise FileNotFoundError(f"Không tìm thấy thư mục video: {videos_root}")
 
     rows = []
-
-    video_files = sorted(VIDEOS_ROOT.rglob("*.mp4"))
+    video_files = sorted(videos_root.rglob("*.mp4"))
     if not video_files:
-        raise RuntimeError(
-            f"Không tìm thấy file .mp4 nào trong dataset {DATASET_TYPE}."
-        )
+        raise RuntimeError(f"Không tìm thấy file .mp4 nào trong {videos_root}")
 
     for video_path in video_files:
         try:
@@ -79,7 +87,7 @@ def main() -> None:
 
         rows.append(
             {
-                "dataset_type": DATASET_TYPE,
+                "dataset_type": dataset_type,
                 "video_path": str(video_path.resolve()),
                 "video_name": video_path.name,
                 "subject_id": subject_id,
@@ -93,27 +101,21 @@ def main() -> None:
             }
         )
 
-    df = pd.DataFrame(rows)
-    df = df.sort_values(
-        ["subject_id", "session_id", "label", "video_name"]
-    ).reset_index(drop=True)
+    df = (
+        pd.DataFrame(rows)
+        .sort_values(["subject_id", "session_id", "label", "video_name"])
+        .reset_index(drop=True)
+    )
 
-    df.to_csv(OUTPUT_CSV, index=False, encoding="utf-8-sig")
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_csv, index=False, encoding="utf-8-sig")
 
-    print(f"[DONE] Đã tạo manifest: {OUTPUT_CSV}")
-    print(f"[INFO] Dataset type: {DATASET_TYPE}")
+    print(f"[DONE] Đã tạo manifest: {output_csv}")
     print(f"[INFO] Tổng số video: {len(df)}")
-
     print("\n[SỐ LƯỢNG THEO LABEL]")
     print(df.groupby("label").size())
-
     print("\n[SỐ LƯỢNG THEO SUBJECT / SESSION / LABEL]")
     print(df.groupby(["subject_id", "session_id", "label"]).size())
-
-    unreadable = df[df["is_readable"] == 0]
-    if len(unreadable) > 0:
-        print("\n[WARN] Có video không đọc được:")
-        print(unreadable[["video_path"]])
 
 
 if __name__ == "__main__":

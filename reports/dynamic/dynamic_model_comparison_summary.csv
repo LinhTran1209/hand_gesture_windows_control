@@ -1,0 +1,5 @@
+﻿model,val_accuracy,test_accuracy,val_macro_f1,test_macro_f1,val_weighted_f1,test_weighted_f1
+svm_rbf,1.0,1.0,1.0,1.0,1.0,1.0
+logistic_regression,1.0,1.0,1.0,1.0,1.0,1.0
+random_forest,1.0,1.0,1.0,1.0,1.0,1.0
+svm_linear,1.0,1.0,1.0,1.0,1.0,1.0

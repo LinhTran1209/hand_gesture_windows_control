@@ -31,3 +31,8 @@ models/reports/*.json
 *.log
 *.cache
 *.tmp
+
+*.docx
+
+dist/
+build/

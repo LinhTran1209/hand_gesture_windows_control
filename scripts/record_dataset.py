@@ -41,7 +41,7 @@ def create_output_dir(
         / "raw"
         / "self_collected"
         / "videos"
-        / "dynamic"  # static or dynamic
+        / "static"  # static or dynamic -----------------------------------------------------------------------------
         / f"subject_{subject}"
         / f"session_{session}"
         / label
