@@ -1,20 +1,31 @@
-from dataclasses import dataclass
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
 
 GuideItem = tuple[str, str]
 
 
-@dataclass
-class BaseMode:
+class BaseMode(ABC):
+    """Base interface for one runtime control mode."""
+
     name: str
     display_name: str
     hotkey: str
     use_pointer_move: bool = False
 
+    @abstractmethod
     def get_guide_items(self) -> list[GuideItem]:
-        return []
+        """Return gesture guide items shown in the right-side preview panel."""
 
-    def handle_pinch(self, pyautogui_module):
-        return False, "Pinch not mapped"
+    @abstractmethod
+    def handle_pinch(self, pyautogui_module: Any) -> tuple[bool, str]:
+        """Handle the static pinch gesture."""
 
-    def handle_dynamic_gesture(self, gesture: str, pyautogui_module):
-        return False, f"Dynamic gesture not mapped: {gesture}"
+    @abstractmethod
+    def handle_dynamic_gesture(
+        self,
+        gesture: str,
+        pyautogui_module: Any,
+    ) -> tuple[bool, str]:
+        """Handle two_fingers-derived gestures: up, down, back, next."""

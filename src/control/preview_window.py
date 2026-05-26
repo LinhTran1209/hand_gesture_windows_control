@@ -1,13 +1,15 @@
 import sys
 import time
 import cv2 as cv
+import numpy as np
 
 from .config import (
+    CAMERA_HEIGHT,
+    CAMERA_WIDTH,
     FIXED_PREVIEW_WINDOW,
+    GUIDE_PANEL_WIDTH,
     MIN_RENDER_WINDOW_SIZE,
     PREVIEW_BASE_HEIGHT,
-    PREVIEW_BASE_WIDTH,
-    PREVIEW_COMPACT_RENDER,
     PREVIEW_MARGIN_BOTTOM,
     PREVIEW_MARGIN_RIGHT,
     PREVIEW_PIN_TO_BOTTOM_RIGHT,
@@ -20,20 +22,41 @@ from .config import (
 )
 from .state import ControlState
 
+# ---------------------------------------------------------------------------
+# BUG FIX #1: get_preview_size đã sai vì chỉ tính camera width (640) mà bỏ
+# qua guide panel (480px).  Canvas thực tế là 1760×720, nhưng window được set
+# thành 640×360 → aspect ratio 1.78 thay vì 2.44 → nội dung bị bóp méo và
+# OpenCV phải scale 1.267M pixel → 230K pixel (5.5× dư thừa) MỖI frame.
+#
+# Công thức đúng: base_scale = PREVIEW_BASE_HEIGHT / CAMERA_HEIGHT = 0.5
+#   window_w = (CAMERA_WIDTH + GUIDE_PANEL_WIDTH) × base_scale × user_scale
+#   window_h = CAMERA_HEIGHT × base_scale × user_scale
+# scale=1.0 → 880×360 (đúng AR 2.44), scale=1.8 → 1584×648, v.v.
+# ---------------------------------------------------------------------------
+_BASE_SCALE = PREVIEW_BASE_HEIGHT / CAMERA_HEIGHT  # 360/720 = 0.5
+_CANVAS_W = CAMERA_WIDTH + GUIDE_PANEL_WIDTH  # 1760
+_CANVAS_H = CAMERA_HEIGHT  # 720
+
 
 def get_preview_size(state: ControlState | None = None) -> tuple[int, int]:
     scale = state.preview_scale if state is not None else PREVIEW_SCALE_DEFAULT
-    width = int(PREVIEW_BASE_WIDTH * scale)
-    height = int(PREVIEW_BASE_HEIGHT * scale)
+    width = int(_CANVAS_W * _BASE_SCALE * scale)
+    height = int(_CANVAS_H * _BASE_SCALE * scale)
     return max(320, width), max(180, height)
 
 
-def configure_fixed_preview_window(window_name: str, state: ControlState | None = None, force: bool = False) -> None:
+def configure_fixed_preview_window(
+    window_name: str, state: ControlState | None = None, force: bool = False
+) -> None:
     if not FIXED_PREVIEW_WINDOW:
         return
 
     now = time.perf_counter()
-    if not force and state is not None and now - state.last_preview_window_fix_ts < 0.50:
+    if (
+        not force
+        and state is not None
+        and now - state.last_preview_window_fix_ts < 0.50
+    ):
         return
 
     if state is not None:
@@ -54,6 +77,7 @@ def configure_fixed_preview_window(window_name: str, state: ControlState | None 
 
     try:
         import ctypes
+
         user32 = ctypes.windll.user32
         hwnd = user32.FindWindowW(None, window_name)
         if not hwnd:
@@ -94,11 +118,22 @@ def configure_fixed_preview_window(window_name: str, state: ControlState | None 
         return
 
 
-def make_preview_frame(frame, state: ControlState):
-    if not PREVIEW_COMPACT_RENDER:
+# ---------------------------------------------------------------------------
+# BUG FIX #2 (liên quan): make_preview_frame trước đây chỉ resize khi
+# PREVIEW_COMPACT_RENDER=True (default=False) → canvas 1760×720 được đưa
+# thẳng vào cv.imshow() dù window chỉ là 880×360.
+# OpenCV phải downscale nội bộ trên GPU/CPU MỖI frame → chiếm tài nguyên,
+# làm chậm main loop, khiến chuột bị lag (xem mouse_actions.py).
+#
+# Fix: LUÔN resize canvas về đúng kích thước window trước khi imshow.
+# cv.INTER_AREA là thuật toán tốt nhất cho downscale (anti-aliasing).
+# ---------------------------------------------------------------------------
+def make_preview_frame(frame: np.ndarray, state: ControlState) -> np.ndarray:
+    target_w, target_h = get_preview_size(state)
+    h, w = frame.shape[:2]
+    if w == target_w and h == target_h:
         return frame
-    preview_w, preview_h = get_preview_size(state)
-    return cv.resize(frame, (preview_w, preview_h), interpolation=cv.INTER_AREA)
+    return cv.resize(frame, (target_w, target_h), interpolation=cv.INTER_AREA)
 
 
 def is_preview_renderable(window_name: str) -> bool:
@@ -123,7 +158,9 @@ def is_preview_renderable(window_name: str) -> bool:
 
 
 def change_preview_scale(state: ControlState, delta: float) -> None:
-    state.preview_scale = max(PREVIEW_SCALE_MIN, min(PREVIEW_SCALE_MAX, state.preview_scale + delta))
+    state.preview_scale = max(
+        PREVIEW_SCALE_MIN, min(PREVIEW_SCALE_MAX, state.preview_scale + delta)
+    )
     state.last_action = f"Preview zoom {state.preview_scale:.2f}x"
 
 

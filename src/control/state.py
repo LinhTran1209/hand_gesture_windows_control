@@ -14,6 +14,9 @@ class ControlState:
     last_action: str = "None"
     mouse_x: float | None = None
     mouse_y: float | None = None
+    last_mouse_ts: float = 0.0
+    mouse_left_down: bool = False
+    drag_source: str | None = None
     prev_stable_static_pred: str = "None"
     prev_stable_dynamic_pred: str = "None"
     dynamic_collecting: bool = False

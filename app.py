@@ -51,9 +51,11 @@ from src.control.hand_utils import (
 from src.control.mode_manager import build_default_mode_manager
 from src.control.model_loader import load_model_predictor, predict_one_label
 from src.control.mouse_actions import (
+    maybe_handle_secondary_pinch_drag,
     maybe_move_mouse,
     maybe_toggle_active,
     maybe_trigger_pinch_action,
+    release_mouse_left_if_down,
 )
 from src.control.overlay import build_preview_canvas, draw_landmarks, draw_mouse_preview
 from src.control.preview_window import (
@@ -89,8 +91,10 @@ def reset_runtime_state(
     state.last_navigation_ts = 0.0
     state.last_mode_ts = 0.0
     state.last_action = "Reset state"
+    release_mouse_left_if_down(state, pyautogui, "Release left mouse")
     state.mouse_x = None
     state.mouse_y = None
+    state.last_mouse_ts = 0.0
     state.prev_stable_static_pred = "None"
     state.prev_stable_dynamic_pred = "None"
     state.dynamic_collecting = False
@@ -222,6 +226,10 @@ def main() -> None:
                         stable_static_pred = voted_label
 
                     maybe_toggle_active(state, stable_static_pred)
+                    if not state.active:
+                        release_mouse_left_if_down(
+                            state, pyautogui, "Release left mouse"
+                        )
 
                     if current_mode.use_pointer_move:
                         maybe_move_mouse(
@@ -256,19 +264,30 @@ def main() -> None:
                         if secondary_voted is not None:
                             secondary_static_pred = secondary_voted
 
-                        maybe_trigger_pinch_action(
+                        drag_handled = maybe_handle_secondary_pinch_drag(
                             state,
+                            stable_static_pred,
                             secondary_static_pred,
                             secondary_landmarks,
-                            source="secondary",
-                            action_callback=lambda: current_mode.handle_pinch(
-                                pyautogui
-                            ),
+                            current_mode.use_pointer_move,
+                            pyautogui,
                         )
+
+                        if not drag_handled:
+                            maybe_trigger_pinch_action(
+                                state,
+                                secondary_static_pred,
+                                secondary_landmarks,
+                                source="secondary",
+                                action_callback=lambda: current_mode.handle_pinch(
+                                    pyautogui
+                                ),
+                            )
                     except Exception as exc:
                         secondary_static_pred = f"ERR: {type(exc).__name__}"
                 else:
                     state.secondary_pinch_touching = False
+                    release_mouse_left_if_down(state, pyautogui, "Release left mouse")
 
                 try:
                     status_text, detected_gesture = detect_two_finger_gesture(
@@ -314,6 +333,7 @@ def main() -> None:
                 state.primary_pinch_touching = False
                 state.secondary_pinch_touching = False
                 state.primary_center = None
+                release_mouse_left_if_down(state, pyautogui, "Release left mouse")
 
                 if no_hand_frames >= NO_HAND_RESET_FRAMES and state.active:
                     state.active = False
@@ -354,6 +374,7 @@ def main() -> None:
 
             key = cv.waitKey(1) & 0xFF
             if key == ord("q"):
+                release_mouse_left_if_down(state, pyautogui, "Release left mouse")
                 break
             if key == ord("r"):
                 reset_runtime_state(
@@ -378,6 +399,7 @@ def main() -> None:
                     state.primary_pinch_touching = False
                     state.secondary_pinch_touching = False
                     state.primary_center = None
+                    release_mouse_left_if_down(state, pyautogui, "Release left mouse")
                 state.last_action = f"Manual toggle -> {state.active}"
 
             elif key == ord("p"):
@@ -389,6 +411,7 @@ def main() -> None:
                     state.last_action = f"Switch mode -> {mode.display_name}"
                     state.primary_pinch_touching = False
                     state.secondary_pinch_touching = False
+                    release_mouse_left_if_down(state, pyautogui, "Release left mouse")
                     reset_dynamic_runtime(dynamic_history, pose_buffer)
 
             elif key in (ord("+"), ord("=")):
@@ -400,6 +423,7 @@ def main() -> None:
                 configure_fixed_preview_window(PREVIEW_WINDOW_NAME, state, force=True)
 
     finally:
+        release_mouse_left_if_down(state, pyautogui, "Release left mouse")
         if hasattr(tracker, "close"):
             try:
                 tracker.close()

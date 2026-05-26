@@ -14,7 +14,11 @@ from .config import (
     POSE_MIN_FRAMES,
     UP_SPREAD_RATIO_MIN,
 )
-from .hand_utils import avg_pose_frames, most_common_handedness, two_finger_pose_features
+from .hand_utils import (
+    avg_pose_frames,
+    most_common_handedness,
+    two_finger_pose_features,
+)
 from .state import ControlState
 
 PoseFrame = tuple[float, float, float, float, float, str]
@@ -124,6 +128,8 @@ def mark_dynamic_action_executed(
     pose_buffer.clear()
 
 
-def reset_dynamic_runtime(dynamic_history: deque[str], pose_buffer: deque[PoseFrame]) -> None:
+def reset_dynamic_runtime(
+    dynamic_history: deque[str], pose_buffer: deque[PoseFrame]
+) -> None:
     dynamic_history.clear()
     pose_buffer.clear()
